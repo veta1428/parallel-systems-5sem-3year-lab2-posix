@@ -1,0 +1,4 @@
+﻿  Source.c
+D:\Liza\university3year\sem5\ParallelSystems\Lab2\Lab2\Source.c(88,13): warning C4013: 'strcmp' undefined; assuming extern returning int
+D:\Liza\university3year\sem5\ParallelSystems\Lab2\Lab2\Source.c(147,11): warning C4244: 'function': conversion from 'time_t' to 'unsigned int', possible loss of data
+  Lab2.vcxproj -> D:\Liza\university3year\sem5\ParallelSystems\Lab2\Lab2\x64\Debug\Lab2.exe
