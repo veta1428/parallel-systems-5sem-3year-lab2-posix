@@ -1,3 +1,4 @@
+//gcc -pthread -o <exe filename> <source code file name> -lm
 #define _CRT_SECURE_NO_WARNINGS
 
 #include <stdio.h>
@@ -7,17 +8,10 @@
 #include <time.h>
 #include <stdlib.h>
 #include "Vector.h"
+#include <time.h>
 #include <pthread.h>
 
-#define SEGMENTS 1e4
-
-// shared resource
-int unprocessed_tasks_amount = 0;
-
-pthread_mutex_t mutex;
-pthread_cond_t condition;
-
-//gcc -pthread -o lab lab.c -lm
+#define SEGMENTS 1e5
 
 typedef struct Task {
     double (*integrate_function) (double);
@@ -25,9 +19,13 @@ typedef struct Task {
     double b;
 } Task;
 
-// shared resource
+// shared resources
+int unprocessed_tasks_amount = 0;
 Task* vector = NULL;
 bool end_task = false;
+
+pthread_mutex_t mutex;
+pthread_cond_t condition;
 
 double func1(double x) {
     return x * x + x;
@@ -41,7 +39,7 @@ double func3(double x) {
     return log(x);
 }
 
-void taskGen() {
+void taskGen(int tasks_amount) {
     FILE* fp;
 
     if ((fp = fopen("tasks.txt", "w")) == NULL) {
@@ -50,8 +48,6 @@ void taskGen() {
     }
 
     char* arr[3] = {"func1", "func2", "func3"};
-
-    int tasks_amount = rand() % 20 + 1;
 
     for (size_t i = 0; i < tasks_amount; i++)
     {
@@ -77,12 +73,10 @@ void producer() {
     char func_name[6];
     double a = 0;
     double b = 0;
-    int counter = 0;
+
     while (true) {
         int ret = fscanf(fp, "%s %lf %lf", func_name, &a, &b);
-        if (ret == 3)
-            printf("\n%s \t %f \t %f", func_name, a, b);
-        else if (errno != 0) {
+        if (errno != 0) {
             perror("scanf:");
             break;
         }
@@ -91,9 +85,6 @@ void producer() {
             end_task = true;
             pthread_mutex_unlock(&mutex);
             break;
-        }
-        else {
-            puts("No or partial match.\n");
         }
 
         Task task;
@@ -116,19 +107,17 @@ void producer() {
         }
 
         pthread_mutex_lock(&mutex);
-        printf("Producer - adding task %d\n", counter);
         ++unprocessed_tasks_amount;
         vector_push_back(vector, task);
         pthread_cond_signal(&condition);
         pthread_mutex_unlock(&mutex);
-        //printf("\nProducer - after mutex released %d\n", counter);
-        //put task into buffer
-        counter++;
     }
+
+    fclose(fp);
 }
 
-double integrate(Task task) {
-    double step = (task.b - task.a) / SEGMENTS;
+double integrate(Task task, int segments) {
+    double step = (task.b - task.a) / segments;
     double x = task.a;
     double sum = 0;
     while (x < task.b) {
@@ -139,8 +128,9 @@ double integrate(Task task) {
     return sum * step;
 }
 
-void consumer() {
+void consumer(void* args) {
     
+    int segments = *((int*)args);
     FILE* fp;
 
     if ((fp = fopen("results.txt", "w")) == NULL) {
@@ -152,38 +142,36 @@ void consumer() {
 
     int counter = 0;
     while (true) {
-        //printf("\nConsumer - before mutex lock %d\n", counter);
         pthread_mutex_lock(&mutex);
-        //printf("\nTasks unprocessed %d\n", unprocessed_tasks_amount);
-        //printf("\nConsumer - just after mutex lock %d\n", counter);
         if (end_task == true && unprocessed_tasks_amount == 0) {
-            printf("Consumer - ending task\n");
             pthread_mutex_unlock(&mutex);
             return;
         }
 
         if (unprocessed_tasks_amount == 0)
         {
-            //printf("\nConsumer - waiting task %d\n", counter);
             pthread_cond_wait(&condition, &mutex);
         }
 
         task = vector[counter];
         unprocessed_tasks_amount--;
         pthread_mutex_unlock(&mutex);
-        printf("Consumer processing task %d\n", counter);
-        double result = integrate(task);
-        fprintf(fp, "\n%lf %lf result = %lf\n", task.a, task.b, result);
+        double result = integrate(task, segments);
+        if(task.integrate_function == func1){
+            fprintf(fp, "func1 %lf %lf RESULT= %lf\n", task.a, task.b, result);
+        } else if (task.integrate_function == func2){
+            fprintf(fp, "func2 %lf %lf RESULT= %lf\n", task.a, task.b, result);
+        } else {
+            fprintf(fp, "func3 %lf %lf RESULT= %lf\n", task.a, task.b, result);
+        }
         counter++;
     }
 
     fclose(fp);
 }
 
-int main(void) {
-    srand(time(NULL));
-    taskGen();
-    
+void doJob(int* segments)
+{
     int res = 0;
     pthread_t thProducer, thConsumer;
 
@@ -197,7 +185,7 @@ int main(void) {
         exit(EXIT_FAILURE);
     }
 
-    res = pthread_create(&thConsumer, NULL, consumer, NULL);
+    res = pthread_create(&thConsumer, NULL, consumer, (void*)segments);
     if (res != 0)
     {
         perror("pthread_create");
@@ -206,6 +194,27 @@ int main(void) {
 
     pthread_join(thProducer, NULL);
     pthread_join(thConsumer, NULL);
+
+    pthread_cond_destroy(&condition);
+}
+
+int main(void) {
+    srand(time(NULL));
+    taskGen(1000);
+    
+    int segments[] = {1e6, 1e7, 1e8};
+
+    for (size_t i = 0; i < 3; i++)
+    {
+        clock_t t;
+        t = clock();
+
+		doJob(&segments[i]);
+
+        t = clock() - t;
+        double time_taken = ((double)t)/CLOCKS_PER_SEC; // calculate the elapsed time
+        printf("On segments= %d, time=%f sec\n", segments[i], time_taken);
+    }
 
     return EXIT_SUCCESS;
 }
